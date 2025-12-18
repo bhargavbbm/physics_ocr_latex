@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Handwritten Physics → LaTeX Converter</title>
+
+<style>
+    body {
+        font-family: Arial, sans-serif;
+        background: #111;
+        color: #eee;
+        padding: 20px;
+    }
+    #container {
+        max-width: 800px;
+        margin: auto;
+        background: #222;
+        padding: 20px;
+        border-radius: 8px;
+    }
+    h1 {
+        text-align: center;
+        color: #6cf;
+        font-weight: bold;
+    }
+    input, button {
+        width: 100%;
+        padding: 12px;
+        margin-top: 10px;
+        border: none;
+        border-radius: 6px;
+        font-size: 16px;
+    }
+    button {
+        background: #6cf;
+        color: #000;
+        font-weight: bold;
+        cursor: pointer;
+    }
+    button:hover {
+        background: #4af;
+    }
+    #output {
+        margin-top: 25px;
+        padding: 15px;
+        background: #333;
+        white-space: pre-wrap;
+        border-radius: 8px;
+    }
+</style>
+</head>
+
+<body>
+
+<div id="container">
+
+<h1>Handwritten Physics → LaTeX</h1>
+
+<input type="file" id="fileInput" accept="image/*,application/pdf" />
+
+<button onclick="processFile()">Convert to LaTeX</button>
+
+<h2>Result:</h2>
+<div id="output">Upload a file to begin...</div>
+
+</div>
+
+<script>
+
+// --------------------------
+// 1. REPLICATE API CALL
+// --------------------------
+
+async function callReplicate(model, inputData) {
+    const token = "r8_LMoNFkbWa4aYIVb0TTAwdgGIaKioHKh0E9XTE";  // <-- replace this before deploying
+
+    const response = await fetch("https://api.replicate.com/v1/predictions", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Token " + token
+        },
+        body: JSON.stringify({
+            version: model,
+            input: inputData
+        })
+    });
+
+    const prediction = await response.json();
+
+    // Wait until prediction completes:
+    let result = prediction;
+    while (result.status !== "succeeded" && result.status !== "failed") {
+        await new Promise(r => setTimeout(r, 1500));
+        
+        let check = await fetch("https://api.replicate.com/v1/predictions/" + prediction.id, {
+            headers: { "Authorization": "Token " + token }
+        });
+        result = await check.json();
+    }
+
+    if (result.status === "failed") {
+        throw new Error("Model failed: " + JSON.stringify(result.error));
+    }
+
+    return result.output;
+}
+
+
+// --------------------------
+// 2. MAIN PIPELINE
+// --------------------------
+
+async function processFile() {
+    const file = document.getElementById("fileInput").files[0];
+    if (!file) {
+        alert("Please upload a file first!");
+        return;
+    }
+
+    document.getElementById("output").innerText = "Processing... please wait.";
+
+    const arrayBuffer = await file.arrayBuffer();
+    const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+
+    try {
+
+        // STEP A: Layout Detection (Find blocks)
+        const layoutOutput = await callReplicate(
+            "yolox-based-model-id-here",
+            { image: "data:application/octet-stream;base64," + base64 }
+        );
+
+        // STEP B: For each detected block: classify → text or math
+        let finalLatex = "";
+
+        for (let block of layoutOutput.blocks) {
+            if (block.type === "equation") {
+
+                const eqOut = await callReplicate(
+                    "pix2tex-model-id-here",
+                    { image: block.crop }
+                );
+
+                finalLatex += "\n$$ " + eqOut + " $$\n";
+
+            } else {
+
+                const textOut = await callReplicate(
+                    "trocr-model-id-here",
+                    { image: block.crop }
+                );
+
+                finalLatex += textOut + "\n\n";
+            }
+        }
+
+        document.getElementById("output").innerText = finalLatex;
+
+    } catch (err) {
+        document.getElementById("output").innerText = "Error: " + err;
+    }
+}
+
+</script>
+
+</body>
+</html>
